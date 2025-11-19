@@ -44,28 +44,28 @@ void check_line_wrap(int fd, char *buffer, int *pos, int *column) {
     }
     
     if (found_space != -1 && found_space < *pos - 1) {
-        
+
         int new_line_start = found_space + 1; 
         int chars_to_move = *pos - new_line_start;
         
-     
+ 
         write(fd, "\n", 1);
         
-   
+
         for (int i = 0; i < chars_to_move; i++) {
             write(fd, &buffer[new_line_start + i], 1);
         }
         
-       
+   
         for (int i = 0; i < chars_to_move; i++) {
             buffer[i] = buffer[new_line_start + i];
         }
         
-        
+
         *pos = chars_to_move;
         *column = chars_to_move;
     } else {
- 
+
         write(fd, "\n", 1);
      
         *column = 1;
