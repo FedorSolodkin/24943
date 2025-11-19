@@ -23,7 +23,7 @@ void erase_word(int fd, char *buffer, int *pos) {
 }
 
 void check_line_wrap(int fd, char *buffer, int *pos, int *column) {
-    if (*column < MAX_LINE) {  
+    if (*column < MAX_LINE) {
         return; 
     }
     
@@ -32,19 +32,38 @@ void check_line_wrap(int fd, char *buffer, int *pos, int *column) {
     int found_space = -1;
     
 
-    while (wrap_pos >= 0) {
+    while (wrap_pos >= 0 && (*pos - wrap_pos) <= MAX_LINE) {
         if (isspace(buffer[wrap_pos])) {
             found_space = wrap_pos;
-           
-            if (found_space < *pos - 1) {
-                break;
-            }
+            break;
         }
         wrap_pos--;
     }
     
-    if (found_space != -1 && found_space < *pos - 1) {
-        int new_line_start = found_space + 1; 
+    if (found_space != -1) {
+ 
+        int new_line_start = found_space; 
+        int chars_to_move = *pos - new_line_start;
+        
+        // Перенос на новую строку
+        write(fd, "\n", 1);
+        
+      
+        for (int i = 0; i < chars_to_move; i++) {
+            write(fd, &buffer[new_line_start + i], 1);
+        }
+        
+
+        for (int i = 0; i < chars_to_move; i++) {
+            buffer[i] = buffer[new_line_start + i];
+        }
+        
+
+        *pos = chars_to_move;
+        *column = chars_to_move;
+    } else {
+     
+        int new_line_start = *pos - MAX_LINE;
         int chars_to_move = *pos - new_line_start;
         
         write(fd, "\n", 1);
@@ -59,9 +78,6 @@ void check_line_wrap(int fd, char *buffer, int *pos, int *column) {
         
         *pos = chars_to_move;
         *column = chars_to_move;
-    } else {
-        write(fd, "\n", 1);
-        *column = 1;
     }
 }
 
