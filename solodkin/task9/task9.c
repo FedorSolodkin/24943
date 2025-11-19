@@ -2,62 +2,50 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/wait.h>
-#include <string.h>
 
-int main(void) {
+int main() {
     pid_t pid;
     int status;
 
-    // Первая часть - параллельное выполнение
-    printf("=== Первая часть ===\n");
+    
     pid = fork();
     
     if (pid == -1) {
-        perror("fork");
+        perror("Ошибка при создании процесса");
         exit(EXIT_FAILURE);
     }
-    
+
     if (pid == 0) {
-        // Дочерний процесс
-        execlp("cat", "cat", "/var/log/syslog", NULL);
-        perror("execlp");
-        exit(EXIT_FAILURE);
-    } else {
-        // Родительский процесс
-        printf("Родитель: дочерний процесс создан с PID %d\n", pid);
-        printf("Родитель: продолжаю работу параллельно\n");
-        sleep(1); // Даем время для демонстрации
-    }
     
-    // Вторая часть - ожидание завершения
-    printf("\n=== Вторая часть ===\n");
-    pid = fork();
-    
-    if (pid == -1) {
-        perror("fork");
-        exit(EXIT_FAILURE);
-    }
-    
-    if (pid == 0) {
-        // Дочерний процесс
-        execlp("cat", "cat", "/var/log/syslog", NULL);
-        perror("execlp");
-        exit(EXIT_FAILURE);
-    } else {
-        // Родительский процесс ждет завершения
-        printf("Родитель: ожидаю завершения дочернего процесса\n");
-        waitpid(pid, &status, 0);
+        printf("Дочерний процесс: запускаю cat для файла long_file.txt\n");
+        execlp("cat", "cat", "long_file.txt", NULL);
         
-        if (WIFEXITED(status)) {
-            printf("Родитель: дочерний процесс завершился со статусом %d\n", 
-                   WEXITSTATUS(status));
-        } else if (WIFSIGNALED(status)) {
-            printf("Родитель: дочерний процесс убит сигналом %d\n", 
-                   WTERMSIG(status));
+        
+        perror("Ошибка при выполнении cat");
+        exit(EXIT_FAILURE);
+    } else {
+      
+        printf("Родительский процесс: работаю параллельно с cat\n");
+        printf("PID дочернего процесса: %d\n", pid);
+        printf("Родитель печатает этот текст, пока дочерний процесс выполняется\n");
+        
+
+        printf("Родитель ожидает завершения дочернего процесса...\n");
+        if (waitpid(pid, &status, 0) == -1) {
+            perror("Ошибка при ожидании процесса");
+            exit(EXIT_FAILURE);
         }
         
-        printf("Родитель: это последняя строка после завершения дочернего процесса\n");
+   
+        if (WIFEXITED(status)) {
+            printf("Дочерний процесс завершился успешно со статусом %d\n", WEXITSTATUS(status));
+        } else if (WIFSIGNALED(status)) {
+            printf("Дочерний процесс завершен сигналом %d\n", WTERMSIG(status));
+        }
+        
+   
+        printf("=== ЭТА СТРОКА ВЫВЕДЕНА ПОСЛЕ ЗАВЕРШЕНИЯ ДОЧЕРНЕГО ПРОЦЕССА ===\n");
     }
-    
+
     return 0;
 }
