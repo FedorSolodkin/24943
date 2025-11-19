@@ -6,7 +6,6 @@
 
 #define MAX_LINE 40
 
-
 void erase_character(int fd, int *pos) {
     if (*pos > 0) {
         write(fd, "\b \b", 3);
@@ -24,24 +23,53 @@ void erase_word(int fd, char *buffer, int *pos) {
 }
 
 void check_line_wrap(int fd, char *buffer, int *pos, int *column) {
-    if (*column > MAX_LINE) {
-        int word_start = *pos - 1;
-        while (word_start > 0 && !isspace(buffer[word_start - 1]) && 
-               word_start > *pos - (*column - MAX_LINE)) {
-            word_start--;
+    if (*column <= MAX_LINE) {
+        return; // Перенос не нужен
+    }
+    
+    // Ищем последний пробел в текущей строке (в пределах pos)
+    int wrap_pos = *pos - 1;
+    int found_space = -1;
+    
+    // Ищем пробел, начиная с текущей позиции назад
+    while (wrap_pos >= 0) {
+        if (isspace(buffer[wrap_pos])) {
+            found_space = wrap_pos;
+            // Проверяем, что после пробела есть слово для переноса
+            if (found_space < *pos - 1) {
+                break;
+            }
+        }
+        wrap_pos--;
+    }
+    
+    if (found_space != -1 && found_space < *pos - 1) {
+        
+        int new_line_start = found_space + 1; 
+        int chars_to_move = *pos - new_line_start;
+        
+     
+        write(fd, "\n", 1);
+        
+   
+        for (int i = 0; i < chars_to_move; i++) {
+            write(fd, &buffer[new_line_start + i], 1);
         }
         
-        if (word_start > 0 && isspace(buffer[word_start - 1])) {
-            write(fd, "\n", 1);
-            int word_len = *pos - word_start;
-            for (int i = 0; i < word_len; i++) {
-                write(fd, &buffer[word_start + i], 1);
-            }
-            *column = word_len;
-        } else {
-            write(fd, "\n", 1);
-            *column = *pos;
+       
+        for (int i = 0; i < chars_to_move; i++) {
+            buffer[i] = buffer[new_line_start + i];
         }
+        
+        
+        *pos = chars_to_move;
+        *column = chars_to_move;
+    } else {
+ 
+        write(fd, "\n", 1);
+     
+        *column = 1;
+        
     }
 }
 
