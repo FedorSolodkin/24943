@@ -23,19 +23,19 @@ void erase_word(int fd, char *buffer, int *pos) {
 }
 
 void check_line_wrap(int fd, char *buffer, int *pos, int *column) {
-    if (*column <= MAX_LINE) {
-        return; // Перенос не нужен
+    if (*column < MAX_LINE) {  
+        return; 
     }
     
-    // Ищем последний пробел в текущей строке (в пределах pos)
+
     int wrap_pos = *pos - 1;
     int found_space = -1;
     
-    // Ищем пробел, начиная с текущей позиции назад
+
     while (wrap_pos >= 0) {
         if (isspace(buffer[wrap_pos])) {
             found_space = wrap_pos;
-            // Проверяем, что после пробела есть слово для переноса
+           
             if (found_space < *pos - 1) {
                 break;
             }
@@ -44,32 +44,24 @@ void check_line_wrap(int fd, char *buffer, int *pos, int *column) {
     }
     
     if (found_space != -1 && found_space < *pos - 1) {
-
         int new_line_start = found_space + 1; 
         int chars_to_move = *pos - new_line_start;
         
- 
         write(fd, "\n", 1);
         
-
         for (int i = 0; i < chars_to_move; i++) {
             write(fd, &buffer[new_line_start + i], 1);
         }
         
-   
         for (int i = 0; i < chars_to_move; i++) {
             buffer[i] = buffer[new_line_start + i];
         }
         
-
         *pos = chars_to_move;
         *column = chars_to_move;
     } else {
-
         write(fd, "\n", 1);
-     
         *column = 1;
-        
     }
 }
 
