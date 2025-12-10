@@ -18,7 +18,7 @@ int main() {
     fd_set read_fds; 
     char buffer[BUFFER_SIZE];
     
-  =
+  
     server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_fd < 0) {
         perror("socket error");
