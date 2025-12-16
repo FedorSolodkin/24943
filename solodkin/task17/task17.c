@@ -1,170 +1,112 @@
-#include <stdio.h>
 #include <termios.h>
 #include <unistd.h>
-#include <ctype.h>
-#include <string.h>
-
-#define MAX_LINE 40
-
-void erase_character(int fd, char *buffer, int *pos, int *column) {
-    if (*pos > 0) {
-        if (*column > 0) {
-            write(fd, "\b \b", 3);
-            (*pos)--;
-            (*column)--;
-        } else {
-            int line_start = *pos;
-            while (line_start > 0 && buffer[line_start - 1] != '\n') {
-                line_start--;
-            }
-            
-            if (line_start > 0) {
-                write(fd, "\b \b", 3);
-                (*pos)--;
-                
-                int prev_line_start = line_start - 1;
-                while (prev_line_start > 0 && buffer[prev_line_start - 1] != '\n') {
-                    prev_line_start--;
-                }
-                
-                int prev_line_end = line_start - 1;
-                int prev_line_length = prev_line_end - prev_line_start;
-                
-                *column = prev_line_length;
-                
-                write(fd, "\r", 1);
-                for (int i = prev_line_start; i < prev_line_end; i++) {
-                    write(fd, &buffer[i], 1);
-                }
-                for (int i = 0; i < prev_line_length; i++) {
-                    write(fd, "\b", 1);
-                }
-            }
-        }
-    }
-}
-
-void erase_word(int fd, char *buffer, int *pos, int *column) {
-    while (*pos > 0 && isspace(buffer[*pos - 1])) {
-        erase_character(fd, buffer, pos, column);
-    }
-    while (*pos > 0 && !isspace(buffer[*pos - 1])) {
-        erase_character(fd, buffer, pos, column);
-    }
-}
-
-void check_line_wrap(int fd, char *buffer, int *pos, int *column) {
-    if (*column < MAX_LINE) {
-        return;
-    }
-    
-    int wrap_pos = *pos - 1;
-    int found_space = -1;
-    
-    while (wrap_pos >= 0 && (*pos - wrap_pos) <= MAX_LINE) {
-        if (isspace(buffer[wrap_pos])) {
-            found_space = wrap_pos;
-            break;
-        }
-        wrap_pos--;
-    }
-    
-    if (found_space != -1) {
-        int new_line_start = found_space + 1;
-        int chars_to_move = *pos - new_line_start;
-        
-        if (chars_to_move > 0) {
-            for (int i = 0; i < chars_to_move + 1; i++) {
-                write(fd, "\b \b", 3);
-            }
-            
-            write(fd, "\n", 1);
-            
-            for (int i = 0; i < chars_to_move; i++) {
-                write(fd, &buffer[new_line_start + i], 1);
-            }
-            
-            for (int i = 0; i < chars_to_move; i++) {
-                buffer[i] = buffer[new_line_start + i];
-            }
-            
-            *pos = chars_to_move;
-            *column = chars_to_move;
-        }
-    } else {
-        write(fd, "\n", 1);
-        *column = 0;
-    }
-}
+#include <stdio.h>
 
 int main() {
-    struct termios oldt, newt;
-    char buffer[512];
-    int pos = 0;
-    int column = 0;
+    struct termios original_settings, raw_mode_settings;
     
-    tcgetattr(STDIN_FILENO, &oldt);
-    newt = oldt;
-    newt.c_lflag &= ~(ICANON | ECHO);
-    newt.c_cc[VMIN] = 1;
-    newt.c_cc[VTIME] = 0;
-    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-    
-    unsigned char key_erase = oldt.c_cc[VERASE];
-    unsigned char key_kill = oldt.c_cc[VKILL];
-    unsigned char key_eof = oldt.c_cc[VEOF];
-    unsigned char key_werase = oldt.c_cc[VWERASE];
-    
-    char c;
-    while (read(STDIN_FILENO, &c, 1) == 1) {
-        if (c == key_eof && pos == 0) {
-            break;
-        }
-        else if (c == key_erase) {
-            if (pos > 0) {
-                erase_character(STDOUT_FILENO, buffer, &pos, &column);
+    tcgetattr(STDIN_FILENO, &original_settings);
+    raw_mode_settings = original_settings;
+
+    raw_mode_settings.c_lflag &= ~(ICANON | ECHO | ISIG);
+    raw_mode_settings.c_cc[VMIN] = 1;
+    raw_mode_settings.c_cc[VTIME] = 0;
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &raw_mode_settings);
+
+    char erase_char = raw_mode_settings.c_cc[VERASE];
+    char kill_char = raw_mode_settings.c_cc[VKILL];
+
+    char input_buffer[80];
+    int buffer_length = 0;
+    int cursor_column = 0;
+
+    char current_char;
+    while (read(STDIN_FILENO, &current_char, 1) == 1) {
+        if (current_char == 4) {
+            if (buffer_length == 0) break;
+            write(STDOUT_FILENO, "\a", 1);
+        } 
+        else if (current_char == '\n' || current_char == '\r') {
+            write(STDOUT_FILENO, "\n", 1);
+            buffer_length = 0;
+            cursor_column = 0;
+        } 
+        else if (current_char == erase_char) {
+            if (buffer_length > 0) {
+                write(STDOUT_FILENO, "\b \b", 3);
+                buffer_length--;
+                cursor_column--;
             } else {
                 write(STDOUT_FILENO, "\a", 1);
             }
-        }
-        else if (c == key_kill) {
-            while (pos > 0) {
-                erase_character(STDOUT_FILENO, buffer, &pos, &column);
+        } 
+        else if (current_char == kill_char) {
+            while (buffer_length > 0) {
+                write(STDOUT_FILENO, "\b \b", 3);
+                buffer_length--;
             }
-        }
-        else if (c == key_werase) {
-            if (pos > 0) {
-                erase_word(STDOUT_FILENO, buffer, &pos, &column);
-            } else {
+            cursor_column = 0;
+        } 
+        else if (current_char == 23) {
+            if (buffer_length == 0) {
                 write(STDOUT_FILENO, "\a", 1);
-            }
-        }
-        else if (c == '\n' || c == '\r') {
-            write(STDOUT_FILENO, &c, 1);
-            buffer[pos++] = '\n';
-            buffer[pos] = '\0';
-            printf("\nYou entered: %s", buffer);
-            pos = 0;
-            column = 0;
-        }
-        else if (isprint(c)) {
-            if (pos < sizeof(buffer) - 1) {
-                write(STDOUT_FILENO, &c, 1);
-                buffer[pos++] = c;
-                column++;
-                
-                if (isspace(c) || column >= MAX_LINE) {
-                    check_line_wrap(STDOUT_FILENO, buffer, &pos, &column);
+            } else {
+                while (buffer_length > 0 && input_buffer[buffer_length-1] == ' ') {
+                    write(STDOUT_FILENO, "\b \b", 3);
+                    buffer_length--; 
+                    cursor_column--;
                 }
-            } else {
-                write(STDOUT_FILENO, "\a", 1);
+                while (buffer_length > 0 && input_buffer[buffer_length-1] != ' ') {
+                    write(STDOUT_FILENO, "\b \b", 3);
+                    buffer_length--; 
+                    cursor_column--;
+                }
             }
         }
+        else if (current_char == 27) {
+            write(STDOUT_FILENO, "\a", 1);
+            char escape_char;
+            while (read(STDIN_FILENO, &escape_char, 1) == 1) {
+                if ((escape_char >= 'A' && escape_char <= 'Z') || escape_char == '~')
+                    break;
+            }
+        }
+        else if (current_char >= 32 && current_char < 127) {
+            if (buffer_length < 79) {
+                input_buffer[buffer_length++] = current_char;
+                write(STDOUT_FILENO, &current_char, 1);
+                cursor_column++;
+
+                if (cursor_column > 40) {
+                    int word_start = buffer_length - 1;
+                    while (word_start > 0 && input_buffer[word_start-1] != ' ') 
+                        word_start--;
+                    
+                    int word_length = buffer_length - word_start;
+
+                    if (word_start > 0 && word_length <= 40) {
+                        int position;
+                        for (position = 0; position < word_length; position++)
+                            write(STDOUT_FILENO, "\b \b", 3);
+
+                        write(STDOUT_FILENO, "\n", 1);
+                        
+                        for (position = 0; position < word_length; position++)
+                            input_buffer[position] = input_buffer[word_start + position];
+
+                        buffer_length = word_length;
+                        cursor_column = word_length;
+                        write(STDOUT_FILENO, input_buffer, word_length);
+                    }
+                }
+            }
+        } 
         else {
             write(STDOUT_FILENO, "\a", 1);
         }
     }
-    
-    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &original_settings);
     return 0;
 }
