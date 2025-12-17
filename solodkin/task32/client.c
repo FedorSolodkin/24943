@@ -5,38 +5,42 @@
 #include <unistd.h>
 #include <string.h>
 
-#define UNIX_SOCK_NAME "my_socket"
-#define MAX_BUFFER 1024
+#define SOCKET_PATH "my_socket"
+#define BUF_SIZE 1024
 
 int main(void)
 {
-    int sock_desc;
-    struct sockaddr_un socket_addr;
-    char io_buffer[MAX_BUFFER];
-    ssize_t bytes_transferred;
+    int fd;
+    struct sockaddr_un addr;
+    char buf[BUF_SIZE];
+    ssize_t n;
 
-    sock_desc = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sock_desc == -1) {
-        perror("socket creation failed");
+    fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd == -1)
+    {
+        perror("socket");
         exit(1);
     }
 
-    memset(&socket_addr, 0, sizeof(socket_addr));
-    socket_addr.sun_family = AF_UNIX;
-    strncpy(socket_addr.sun_path, UNIX_SOCK_NAME, sizeof(socket_addr.sun_path) - 1);
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
 
-    if (connect(sock_desc, (struct sockaddr *)&socket_addr, sizeof(socket_addr)) == -1) {
-        perror("connection failed");
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == -1)
+    {
+        perror("connect");
         exit(1);
     }
 
-    while ((bytes_transferred = read(STDIN_FILENO, io_buffer, sizeof(io_buffer))) > 0) {
-        if (write(sock_desc, io_buffer, bytes_transferred) != bytes_transferred) {
-            perror("write error");
+    /* Перекачиваем всё из stdin в сокет */
+    while ((n = read(STDIN_FILENO, buf, sizeof(buf))) > 0)
+    {
+        if (write(fd, buf, n) != n)
+        {
+            perror("write");
             break;
         }
     }
-
-    close(sock_desc);
+    close(fd);
     return 0;
 }
