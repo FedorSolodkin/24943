@@ -3,8 +3,7 @@
 SRV_BINARY="./server"
 CLI_BINARY="./client"
 
-SOCK_NAME="my_socket"
-
+SOCKET_PATH="/tmp/uppercase_socket"
 teardown() {
     echo "Остановка всех компонентов..."
     kill $SRV_PID 2>/dev/null
