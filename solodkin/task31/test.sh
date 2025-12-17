@@ -7,23 +7,24 @@ SOCKET_PATH="/tmp/socket_solodkin_v1"
 # Функция очистки
 teardown() {
     echo "Остановка всех компонентов..."
+    # Убиваем процессы, если они запущены
     [ -n "$SRV_PID" ] && kill $SRV_PID 2>/dev/null
     [ -n "$CLI_1_PID" ] && kill $CLI_1_PID 2>/dev/null
     [ -n "$CLI_2_PID" ] && kill $CLI_2_PID 2>/dev/null
     [ -n "$CLI_3_PID" ] && kill $CLI_3_PID 2>/dev/null
     [ -n "$CLI_4_PID" ] && kill $CLI_4_PID 2>/dev/null
     [ -n "$CLI_5_PID" ] && kill $CLI_5_PID 2>/dev/null
+    
+    # Ждем завершения
     wait 2>/dev/null
+    
+    # Удаляем сокет
     rm -f "$SOCKET_PATH"
     echo "Готово."
     exit 0
 }
 
 trap teardown SIGINT SIGTERM
-
-# !!! ВАЖНО: Удаляем старый сокет ДО запуска сервера, чтобы
-# скрипт не среагировал на файл от прошлого запуска
-rm -f "$SOCKET_PATH"
 
 echo "Запуск серверного процесса..."
 $SRV_BINARY &
@@ -33,7 +34,6 @@ SRV_PID=$!
 echo "Ожидание создания сокета $SOCKET_PATH..."
 for attempt in {1..20}; do
     if [ -S "$SOCKET_PATH" ]; then
-        echo "Сокет обнаружен!"
         break
     fi
     sleep 0.1
@@ -44,11 +44,6 @@ if [ ! -S "$SOCKET_PATH" ]; then
     kill $SRV_PID 2>/dev/null
     exit 1
 fi
-
-# !!! ВАЖНО: Даем серверу секунду, чтобы он точно успел выполнить listen()
-# после создания файла, иначе клиенты получат Connection refused
-echo "Ждем инициализацию сервера..."
-sleep 1
 
 echo "Сервер активен. Запуск клиентских потоков..."
 
