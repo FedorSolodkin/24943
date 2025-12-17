@@ -1,184 +1,152 @@
-#include <stdio.h>
-#include <unistd.h>
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
 #include <aio.h>
-#include <signal.h>
-#include <sys/time.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <ctype.h>
+#include <string.h>
 #include <errno.h>
+#include <signal.h>
+#include <time.h>
 
-#define BUFFER_CAPACITY 100
-#define MAX_PENDING_CONNECTIONS 5
+#define SOCK_FILE "my_socket"
+#define MAX_CONNS 20
+#define CHUNK_SIZE 1
 
-const char *SOCKET_FILE_PATH = "./socket32";
-struct timeval program_start_time;
+typedef struct {
+    int fd;
+    struct aiocb aio_ctrl;
+    char single_byte;
+    int is_active;
+    int client_num;
+} active_client;
 
-struct aiocb *setup_async_operation(int client_fd) {
-    struct aiocb *async_control = calloc(1, sizeof(struct aiocb));
-    if (!async_control) {
-        perror("Memory allocation failed for aiocb");
-        return NULL;
-    }
+static active_client client_pool[MAX_CONNS];
 
-    async_control->aio_fildes = client_fd;
-    async_control->aio_buf = malloc(BUFFER_CAPACITY);
-    if (!async_control->aio_buf) {
-        free(async_control);
-        perror("Memory allocation failed for buffer");
-        return NULL;
-    }
-    
-    async_control->aio_nbytes = BUFFER_CAPACITY;
-    async_control->aio_offset = 0;
-
-    async_control->aio_sigevent.sigev_notify = SIGEV_SIGNAL;
-    async_control->aio_sigevent.sigev_signo = SIGIO;
-    async_control->aio_sigevent.sigev_value.sival_ptr = async_control;
-
-    return async_control;
+void emit_timestamp()
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    char tbuf[64];
+    strftime(tbuf, sizeof(tbuf), "%H:%M:%S", localtime(&ts.tv_sec));
+    printf("[%s.%03ld] ", tbuf, ts.tv_nsec / 1000000);
 }
 
-void process_async_signal(int signum, siginfo_t *info, void *context) {
-    if (signum != SIGIO || info->si_signo != SIGIO) {
-        return;
-    }
-
-    struct aiocb *current_request = info->si_value.sival_ptr;
-    int error_status = aio_error(current_request);
-    
-    if (error_status == 0) {
-        ssize_t bytes_read = aio_return(current_request);
-        char *data_buffer = (char *)current_request->aio_buf;
-        int client_fd = current_request->aio_fildes;
-
-        if (bytes_read == 0) {
-            struct timeval current_time;
-            gettimeofday(&current_time, NULL);
-            double time_elapsed = 
-                (current_time.tv_sec - program_start_time.tv_sec) + 
-                (current_time.tv_usec - program_start_time.tv_usec) / 1000000.0;
-            
-            printf("[%.6f] Client %d closed connection\n", 
-                   time_elapsed, client_fd);
-            
-            close(client_fd);
-            free(data_buffer);
-            free(current_request);
-            return;
+static void graceful_shutdown(int signal_code)
+{
+    for (int i = 0; i < MAX_CONNS; i++) {
+        if (client_pool[i].fd != -1) {
+            aio_cancel(client_pool[i].fd, NULL);
+            close(client_pool[i].fd);
         }
-
-        if (bytes_read > 0) {
-            struct timeval current_time;
-            gettimeofday(&current_time, NULL);
-            double time_elapsed = 
-                (current_time.tv_sec - program_start_time.tv_sec) + 
-                (current_time.tv_usec - program_start_time.tv_usec) / 1000000.0;
-            
-            printf("[%.6f] Client %d: ", time_elapsed, client_fd);
-            
-            for (ssize_t i = 0; i < bytes_read; i++) {
-                data_buffer[i] = toupper((unsigned char)data_buffer[i]);
-                printf("%c", data_buffer[i]);
-            }
-            printf("\n");
-            fflush(stdout);
-
-            if (aio_read(current_request) == -1) {
-                perror("Failed to restart async read");
-                close(client_fd);
-                free(data_buffer);
-                free(current_request);
-            }
-        }
-    } else if (error_status != EINPROGRESS) {
-        perror("Async operation error");
-        close(current_request->aio_fildes);
-        free(current_request->aio_buf);
-        free(current_request);
     }
+    unlink(SOCK_FILE);
+    exit(0);
 }
 
-int main(void) {
-    int server_socket, client_socket;
-    
-    gettimeofday(&program_start_time, NULL);
+int main(void)
+{
+    int listener, new_conn;
+    struct sockaddr_un srv_addr;
+    int free_slot;
 
-    server_socket = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (server_socket == -1) {
-        perror("Failed to create socket");
-        exit(EXIT_FAILURE);
+    signal(SIGINT, graceful_shutdown);
+    signal(SIGTERM, graceful_shutdown);
+
+    listener = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (listener == -1) {
+        perror("socket error");
+        exit(1);
     }
 
-    struct sockaddr_un server_address;
-    memset(&server_address, 0, sizeof(server_address));
-    server_address.sun_family = AF_UNIX;
-    strncpy(server_address.sun_path, SOCKET_FILE_PATH, 
-            sizeof(server_address.sun_path) - 1);
+    memset(&srv_addr, 0, sizeof(srv_addr));
+    srv_addr.sun_family = AF_UNIX;
+    strncpy(srv_addr.sun_path, SOCK_FILE, sizeof(srv_addr.sun_path) - 1);
+    unlink(SOCK_FILE);
 
-    unlink(SOCKET_FILE_PATH);
-
-    if (bind(server_socket, (struct sockaddr *)&server_address, 
-             sizeof(server_address)) == -1) {
-        perror("Failed to bind socket");
-        close(server_socket);
-        exit(EXIT_FAILURE);
+    if (bind(listener, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) == -1) {
+        perror("bind failed");
+        exit(1);
     }
 
-    if (listen(server_socket, MAX_PENDING_CONNECTIONS) == -1) {
-        perror("Failed to listen on socket");
-        close(server_socket);
-        exit(EXIT_FAILURE);
+    if (listen(listener, 10) == -1) {
+        perror("listen error");
+        exit(1);
     }
 
-    struct sigaction sigio_action;
-    memset(&sigio_action, 0, sizeof(sigio_action));
-    sigio_action.sa_sigaction = process_async_signal;
-    sigio_action.sa_flags = SA_SIGINFO | SA_RESTART;
-    
-    if (sigaction(SIGIO, &sigio_action, NULL) == -1) {
-        perror("Failed to set signal handler");
-        close(server_socket);
-        exit(EXIT_FAILURE);
+    fcntl(listener, F_SETFL, O_NONBLOCK);
+
+    printf("Task 32 server — POSIX AIO + CHAOTIC BYTE MIXING (with timestamps) running...\n");
+
+    for (int i = 0; i < MAX_CONNS; i++) {
+        client_pool[i].fd = -1;
+        client_pool[i].client_num = i + 1;
     }
 
-    printf("Asynchronous server started on %s\n", SOCKET_FILE_PATH);
-    printf("Waiting for client connections...\n");
+    while (1)
+    {
+        while ((new_conn = accept(listener, NULL, NULL)) != -1)
+        {
+            for (free_slot = 0; free_slot < MAX_CONNS; free_slot++) {
+                if (client_pool[free_slot].fd == -1) break;
+            }
 
-    while (1) {
-        client_socket = accept(server_socket, NULL, NULL);
-        if (client_socket == -1) {
-            if (errno == EINTR) {
+            if (free_slot == MAX_CONNS) {
+                close(new_conn);
                 continue;
             }
-            perror("Failed to accept client");
-            continue;
+
+            client_pool[free_slot].fd = new_conn;
+            client_pool[free_slot].is_active = 1;
+
+            memset(&client_pool[free_slot].aio_ctrl, 0, sizeof(struct aiocb));
+            client_pool[free_slot].aio_ctrl.aio_fildes = new_conn;
+            client_pool[free_slot].aio_ctrl.aio_buf = &client_pool[free_slot].single_byte;
+            client_pool[free_slot].aio_ctrl.aio_nbytes = CHUNK_SIZE;
+
+            if (aio_read(&client_pool[free_slot].aio_ctrl) == -1) {
+                perror("aio_read setup failed");
+                close(new_conn);
+                client_pool[free_slot].fd = -1;
+                client_pool[free_slot].is_active = 0;
+            }
         }
 
-        struct timeval current_time;
-        gettimeofday(&current_time, NULL);
-        double time_elapsed = 
-            (current_time.tv_sec - program_start_time.tv_sec) + 
-            (current_time.tv_usec - program_start_time.tv_usec) / 1000000.0;
-        
-        printf("[%.6f] New connection: fd=%d\n", time_elapsed, client_socket);
+        for (int i = 0; i < MAX_CONNS; i++)
+        {
+            if (!client_pool[i].is_active) continue;
 
-        struct aiocb *async_request = setup_async_operation(client_socket);
-        if (!async_request) {
-            close(client_socket);
-            continue;
+            int aio_status = aio_error(&client_pool[i].aio_ctrl);
+            if (aio_status == EINPROGRESS) continue;
+
+            ssize_t result = aio_return(&client_pool[i].aio_ctrl);
+
+            if (result == 1)
+            {
+                char upper_char = toupper((unsigned char)client_pool[i].single_byte);
+                printf("%c", upper_char);
+
+                if (aio_read(&client_pool[i].aio_ctrl) == -1) {
+                    if (errno != EAGAIN && errno != EINTR) {
+                        close(client_pool[i].fd);
+                        client_pool[i].fd = -1;
+                        client_pool[i].is_active = 0;
+                    }
+                }
+            }
+            else
+            {
+                close(client_pool[i].fd);
+                client_pool[i].fd = -1;
+                client_pool[i].is_active = 0;
+            }
         }
 
-        if (aio_read(async_request) == -1) {
-            perror("Failed to initiate async read");
-            free(async_request->aio_buf);
-            free(async_request);
-            close(client_socket);
-        }
+        usleep(1000); // 1ms
     }
 
-    close(server_socket);
-    return EXIT_SUCCESS;
+    return 0;
 }

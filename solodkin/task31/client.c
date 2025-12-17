@@ -1,52 +1,50 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <stdlib.h>
-#include <string.h>
 
-const char *SOCKET_FILE_PATH = "./socket31";
+#define UNIX_SOCK_ADDR "/tmp/uppercase_socket"
+#define MAX_BUF 1024
 
-int main(int argc, char *argv[]) {
-    int socket_fd;
-    struct sockaddr_un server_address;
+int main(void)
+{
+    int sock_fd;
+    struct sockaddr_un srv_addr;
+    char data_buf[MAX_BUF];
+    ssize_t num_bytes;
 
-    if (argc < 3) {
-        printf("Usage: %s <character> <repeat_count>\n", argv[0]);
-        exit(1);
+    sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sock_fd == -1) {
+        perror("socket error");
+        exit(EXIT_FAILURE);
     }
 
-    char transmit_char = argv[1][0];
-    int repeat_count = atoi(argv[2]);
+    memset(&srv_addr, 0, sizeof(srv_addr));
+    srv_addr.sun_family = AF_UNIX;
+    strncpy(srv_addr.sun_path, UNIX_SOCK_ADDR, sizeof(srv_addr.sun_path) - 1);
 
-    socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (socket_fd == -1) {
-        perror("socket creation failed");
-        exit(-1);
+    if (connect(sock_fd, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) == -1) {
+        perror("connect error");
+        close(sock_fd);
+        exit(EXIT_FAILURE);
     }
 
-    memset(&server_address, 0, sizeof(server_address));
-    server_address.sun_family = AF_UNIX;
-    strncpy(server_address.sun_path, SOCKET_FILE_PATH, 
-            sizeof(server_address.sun_path) - 1);
+    printf("Соединение с сервером установлено. Вводите текст (Ctrl+D — выход):\n");
 
-    if (connect(socket_fd, (struct sockaddr*)&server_address, 
-                sizeof(server_address)) == -1) {
-        perror("server connection failed");
-        exit(-1);
+    while ((num_bytes = read(STDIN_FILENO, data_buf, MAX_BUF)) > 0) {
+        if (write(sock_fd, data_buf, num_bytes) == -1) {
+            perror("write error");
+            break;
+        }
     }
 
-    printf("Connected to server. Transmitting %d '%c' characters...\n", 
-           repeat_count, transmit_char);
-    
-    for (int iteration = 0; iteration < repeat_count; iteration++) {
-        write(socket_fd, &transmit_char, 1);
-        usleep(100000);
+    if (num_bytes == -1) {
+        perror("read error");
     }
 
-    shutdown(socket_fd, SHUT_WR);
-    sleep(1);
-    close(socket_fd);
-
+    printf("Соединение завершено\n");
+    close(sock_fd);
     return 0;
 }

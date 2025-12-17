@@ -1,159 +1,152 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <stdlib.h>
-#include <string.h>
 #include <ctype.h>
-#include <sys/select.h>
+#include <poll.h>
+#include <errno.h>
+#include <signal.h>
 
-#define SOCKET_NAME "./наш_сокет"
-#define MAX_CLIENTS 10  
-#define BUFFER_SIZE 256
+#define UNIX_SOCK_PATH "/tmp/uppercase_socket"
+#define BUF_SIZE 1024
+#define MAX_CONN 10
 
-int main() {
-    int server_fd, client_fd;
-    int client_sockets[MAX_CLIENTS] = {0};  
-    int max_fd; 
-    fd_set read_fds; 
-    char buffer[BUFFER_SIZE];
-    
-  
-    server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (server_fd < 0) {
-        perror("socket error");
-        return 1;
+static volatile sig_atomic_t terminate_flag = 0;
+
+void signal_handler(int signum)
+{
+    terminate_flag = 1;
+    printf("\nПринят сигнал %d. Завершаем сервер...\n", signum);
+}
+
+int main(void)
+{
+    int srv_sock, cli_sock;
+    struct sockaddr_un srv_addr, cli_addr;
+    socklen_t cli_addr_len;
+    struct pollfd poll_fds[MAX_CONN + 1];
+    int active_fds = 1;
+    int poll_timeout_ms = 1000;
+    char recv_buf[BUF_SIZE];
+    int idx, received;
+
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+
+    srv_sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (srv_sock == -1) {
+        perror("socket creation failed");
+        exit(EXIT_FAILURE);
     }
-    
-  
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strcpy(addr.sun_path, SOCKET_NAME);
-    
 
-    unlink(SOCKET_NAME);
-    
-  
-    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        perror("bind error");
-        close(server_fd);
-        return 1;
+    memset(&srv_addr, 0, sizeof(srv_addr));
+    srv_addr.sun_family = AF_UNIX;
+    strncpy(srv_addr.sun_path, UNIX_SOCK_PATH, sizeof(srv_addr.sun_path) - 1);
+
+    unlink(UNIX_SOCK_PATH);
+
+    if (bind(srv_sock, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) == -1) {
+        perror("bind failed");
+        close(srv_sock);
+        exit(EXIT_FAILURE);
     }
 
-    if (listen(server_fd, 5) < 0) {  
-        perror("listen error");
-        close(server_fd);
-        return 1;
+    if (listen(srv_sock, 5) == -1) {
+        perror("listen failed");
+        close(srv_sock);
+        exit(EXIT_FAILURE);
     }
-    
-    printf("Server started. Waiting for clients...\n");
-    printf("Socket file: %s\n", SOCKET_NAME);
-    printf("Maximum clients: %d\n", MAX_CLIENTS);
-    printf("Press Ctrl+C to stop server\n\n");
-    
 
-    while (1) {
-   
-        FD_ZERO(&read_fds);
-        
-    
-        FD_SET(server_fd, &read_fds);
-        max_fd = server_fd;
-        
-     
-        for (int i = 0; i < MAX_CLIENTS; i++) {
-            if (client_sockets[i] > 0) {
-                FD_SET(client_sockets[i], &read_fds);
-                if (client_sockets[i] > max_fd) {
-                    max_fd = client_sockets[i];
-                }
-            }
+    printf("Сервер запущен на %s\n", UNIX_SOCK_PATH);
+    printf("Завершить: Ctrl+C или SIGTERM\n");
+
+    memset(poll_fds, 0, sizeof(poll_fds));
+    poll_fds[0].fd = srv_sock;
+    poll_fds[0].events = POLLIN;
+
+    while (!terminate_flag)
+    {
+        int poll_result = poll(poll_fds, active_fds, poll_timeout_ms);
+
+        if (poll_result == -1) {
+            if (errno == EINTR) continue;
+            perror("poll error");
+            break;
         }
-        
- 
-        int activity = select(max_fd + 1, &read_fds, NULL, NULL, NULL);
-        
-        if (activity < 0) {
-            perror("select error");
-            continue;
-        }
-        
-  
-        if (FD_ISSET(server_fd, &read_fds)) {
-          
-            client_fd = accept(server_fd, NULL, NULL);
-            if (client_fd < 0) {
+
+        if (poll_result == 0) continue;
+
+        if (poll_fds[0].revents & POLLIN)
+        {
+            cli_addr_len = sizeof(cli_addr);
+            cli_sock = accept(srv_sock, (struct sockaddr *)&cli_addr, &cli_addr_len);
+            if (cli_sock == -1) {
                 perror("accept error");
                 continue;
             }
-            
-       
-            int client_added = 0;
-            for (int i = 0; i < MAX_CLIENTS; i++) {
-                if (client_sockets[i] == 0) {
-                    client_sockets[i] = client_fd;
-                    client_added = 1;
-                    printf("New client connected! Client ID: %d (socket: %d)\n", i, client_fd);
-                    printf("Total clients: ");
-                    int count = 0;
-                    for (int j = 0; j < MAX_CLIENTS; j++) {
-                        if (client_sockets[j] > 0) count++;
-                    }
-                    printf("%d\n", count);
-                    break;
-                }
-            }
-            
-            
-            if (!client_added) {
-                printf("Too many clients! Rejecting connection.\n");
-                close(client_fd);
-            }
-        }
-        
-     
-        for (int i = 0; i < MAX_CLIENTS; i++) {
-            int sd = client_sockets[i];
-            
-            if (sd > 0 && FD_ISSET(sd, &read_fds)) {
-         
-                int n = read(sd, buffer, BUFFER_SIZE);
-                
-                if (n == 0) {
-               
-                    printf("Client %d disconnected.\n", i);
-                    close(sd);
-                    client_sockets[i] = 0;
-                } else if (n > 0) {
-        
-                    for (int j = 0; j < n; j++) {
-                        buffer[j] = toupper(buffer[j]);
-                    }
-                    
-                  
-                    printf("[Client %d]: ", i);
-                    fwrite(buffer, 1, n, stdout);
-                    fflush(stdout);
-                } else {
-                    
-                    perror("read error");
-                    close(sd);
-                    client_sockets[i] = 0;
-                }
-            }
-        }
-    }
-    
 
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (client_sockets[i] > 0) {
-            close(client_sockets[i]);
+            printf("Новое подключение (дескриптор: %d)\n", cli_sock);
+
+            if (active_fds < MAX_CONN + 1) {
+                poll_fds[active_fds].fd = cli_sock;
+                poll_fds[active_fds].events = POLLIN;
+                active_fds++;
+            } else {
+                printf("Достигнут лимит подключений\n");
+                close(cli_sock);
+            }
+        }
+
+        for (idx = 1; idx < active_fds; idx++)
+        {
+            if (poll_fds[idx].revents & POLLIN)
+            {
+                received = read(poll_fds[idx].fd, recv_buf, BUF_SIZE - 1);
+
+                if (received > 0)
+                {
+                    recv_buf[received] = '\0';
+                    for (int k = 0; k < received; k++) {
+                        recv_buf[k] = toupper((unsigned char)recv_buf[k]);
+                    }
+                    printf("[Клиент %d]: %s", poll_fds[idx].fd, recv_buf);
+                    fflush(stdout);
+                }
+
+                if (received <= 0)
+                {
+                    printf("Клиент отключился (дескриптор: %d)\n", poll_fds[idx].fd);
+                    close(poll_fds[idx].fd);
+                    poll_fds[idx].fd = -1;
+                }
+            }
+        }
+
+        for (idx = 1; idx < active_fds; idx++)
+        {
+            if (poll_fds[idx].fd == -1)
+            {
+                for (int shift = idx; shift < active_fds - 1; shift++) {
+                    poll_fds[shift] = poll_fds[shift + 1];
+                }
+                active_fds--;
+                idx--;
+            }
         }
     }
-    
-    close(server_fd);
-    unlink(SOCKET_NAME);
-    
+
+    printf("Остановка сервера...\n");
+
+    for (idx = 0; idx < active_fds; idx++) {
+        if (poll_fds[idx].fd != -1) {
+            close(poll_fds[idx].fd);
+        }
+    }
+
+    unlink(UNIX_SOCK_PATH);
+    printf("Сервер завершил работу.\n");
+
     return 0;
 }
