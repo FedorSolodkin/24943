@@ -1,25 +1,19 @@
+# Временные файлы
+.nfs*
+*.swp
+*.swo
+*~
 .DS_Store
 Thumbs.db
-desktop.ini
 
-*.log
-
+# Бинарники и объекты
 *.o
-*.obj
 *.a
-*.lib
 *.so
-*.dll
+*.out
+*.exe
 
-/*
-!/.*
-!*.*
-
-.vscode/
-.idea/
-*.swo
-*.swp
-*~
-
-build/
-bin/
+# Папки сборки
+/bin/
+/obj/
+/build/

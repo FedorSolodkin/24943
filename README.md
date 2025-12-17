@@ -1,3 +1,4 @@
+
 # 24943
 
 Подключение к Solaris
@@ -77,3 +78,5 @@ cat .ssh/id_rsa.pub
 2. git branch -M main
 3. git push -u origin main
 
+
+>>>>>>> 8016ba8dc8766cc0c31e918b3a704d69af92f218
