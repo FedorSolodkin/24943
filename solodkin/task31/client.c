@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#define SOCKET_PATH "/tmp/socket_solodkin_v1"
 #define UNIX_SOCK_ADDR "/tmp/uppercase_socket"
 #define MAX_BUF 1024
 

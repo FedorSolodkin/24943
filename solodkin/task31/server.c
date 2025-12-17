@@ -1,152 +1,142 @@
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <stdlib.h>
+#include <string.h>
 #include <ctype.h>
 #include <poll.h>
-#include <errno.h>
-#include <signal.h>
+#include <sys/time.h>
 
-#define UNIX_SOCK_PATH "/tmp/uppercase_socket"
-#define BUF_SIZE 1024
-#define MAX_CONN 10
+#define MAX_PENDING_CONNECTIONS 5
+#define MAX_POLL_DESCRIPTORS (MAX_PENDING_CONNECTIONS + 1)
+#define SOCKET_PATH "/tmp/socket_solodkin_v1" // Путь должен совпадать с клиентом!
 
-static volatile sig_atomic_t terminate_flag = 0;
+int register_client(struct pollfd *poll_set, int client_fd);
 
-void signal_handler(int signum)
-{
-    terminate_flag = 1;
-    printf("\nПринят сигнал %d. Завершаем сервер...\n", signum);
+int main() {
+    char buffer[1024];
+    int server_fd, client_fd;
+    ssize_t bytes_read;
+    
+    struct timeval program_start;
+    gettimeofday(&program_start, NULL);
+
+    server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (server_fd == -1) {
+        perror("socket creation failed");
+        exit(-1);
+    }
+
+    struct sockaddr_un server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sun_family = AF_UNIX;
+    strncpy(server_addr.sun_path, SOCKET_PATH, sizeof(server_addr.sun_path) - 1);
+
+    // ВАЖНО: Удаляем старый сокет перед привязкой
+    unlink(SOCKET_PATH);
+
+    if (bind(server_fd, (struct sockaddr *) &server_addr, sizeof(server_addr)) == -1) {
+        perror("bind failed");
+        exit(-1);
+    }
+
+    if (listen(server_fd, MAX_PENDING_CONNECTIONS) == -1) {
+        perror("listen failed");
+        exit(-1);
+    }
+
+    struct pollfd monitored_fds[MAX_POLL_DESCRIPTORS];
+    for (int idx = 0; idx < MAX_POLL_DESCRIPTORS; idx++) {
+        monitored_fds[idx].fd = -1;
+        monitored_fds[idx].events = POLLIN | POLLPRI;
+    }
+
+    monitored_fds[0].fd = server_fd;
+    printf("Server initialized on %s. Awaiting client connections...\n", SOCKET_PATH);
+
+    while (1) {
+        if (poll(monitored_fds, MAX_POLL_DESCRIPTORS, -1) == -1) {
+            perror("polling error");
+            break; // Лучше break чем exit, чтобы дойти до очистки (если бы она была ниже)
+        }
+
+        // Проверяем ошибки на дескрипторах
+        for (int idx = 0; idx < MAX_POLL_DESCRIPTORS; idx++) {
+            if (monitored_fds[idx].fd < 0) continue;
+            
+            short event_flags = monitored_fds[idx].revents;
+            if ((event_flags & POLLERR) || (event_flags & POLLHUP) || (event_flags & POLLNVAL)) {
+                if (idx == 0) {
+                    printf("Critical server error detected\n");
+                    exit(-1);
+                } else {
+                    close(monitored_fds[idx].fd);
+                    monitored_fds[idx].fd = -1;
+                }
+            }
+        }
+
+        // Новые подключения (слушающий сокет)
+        if ((monitored_fds[0].revents & POLLIN) || (monitored_fds[0].revents & POLLPRI)) {
+            client_fd = accept(server_fd, NULL, NULL);
+            if (client_fd != -1) {
+                if (register_client(monitored_fds, client_fd) == -1) {
+                    printf("Too many clients, closing connection %d\n", client_fd);
+                    close(client_fd);
+                } else {
+                    struct timeval now;
+                    gettimeofday(&now, NULL);
+                    double time_passed = (now.tv_sec - program_start.tv_sec) +
+                                       (now.tv_usec - program_start.tv_usec) / 1000000.0;
+                    printf("[%.6f] New client connected with descriptor %d\n", 
+                           time_passed, client_fd);
+                }
+            }
+        }
+
+        // Данные от клиентов
+        for (int idx = 1; idx < MAX_POLL_DESCRIPTORS; idx++) {
+            if (monitored_fds[idx].fd < 0) continue;
+            
+            if ((monitored_fds[idx].revents & POLLIN) || (monitored_fds[idx].revents & POLLPRI)) {
+                bytes_read = read(monitored_fds[idx].fd, buffer, sizeof(buffer));
+                
+                if (bytes_read > 0) {
+                    struct timeval now;
+                    gettimeofday(&now, NULL);
+                    double time_passed = (now.tv_sec - program_start.tv_sec) +
+                                       (now.tv_usec - program_start.tv_usec) / 1000000.0;
+
+                    printf("[%.6f] Client %d transmitted: ", time_passed, monitored_fds[idx].fd);
+                    for (int j = 0; j < bytes_read; j++) {
+                        // Преобразование только если это печатный символ, иначе может быть мусор при переносе строки
+                        if(isprint(buffer[j]) || isspace(buffer[j])) { 
+                            printf("%c", toupper((unsigned char)buffer[j]));
+                        }
+                    }
+                    if (buffer[bytes_read-1] != '\n') printf("\n"); // Добавляем перенос если его не было
+                    fflush(stdout);
+                } else {
+                    // 0 байт = клиент закрыл соединение, -1 = ошибка
+                    close(monitored_fds[idx].fd);
+                    monitored_fds[idx].fd = -1;
+                }
+            }
+        }
+    }
+    
+    unlink(SOCKET_PATH);
+    return 0;
 }
 
-int main(void)
-{
-    int srv_sock, cli_sock;
-    struct sockaddr_un srv_addr, cli_addr;
-    socklen_t cli_addr_len;
-    struct pollfd poll_fds[MAX_CONN + 1];
-    int active_fds = 1;
-    int poll_timeout_ms = 1000;
-    char recv_buf[BUF_SIZE];
-    int idx, received;
-
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
-
-    srv_sock = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (srv_sock == -1) {
-        perror("socket creation failed");
-        exit(EXIT_FAILURE);
-    }
-
-    memset(&srv_addr, 0, sizeof(srv_addr));
-    srv_addr.sun_family = AF_UNIX;
-    strncpy(srv_addr.sun_path, UNIX_SOCK_PATH, sizeof(srv_addr.sun_path) - 1);
-
-    unlink(UNIX_SOCK_PATH);
-
-    if (bind(srv_sock, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) == -1) {
-        perror("bind failed");
-        close(srv_sock);
-        exit(EXIT_FAILURE);
-    }
-
-    if (listen(srv_sock, 5) == -1) {
-        perror("listen failed");
-        close(srv_sock);
-        exit(EXIT_FAILURE);
-    }
-
-    printf("Сервер запущен на %s\n", UNIX_SOCK_PATH);
-    printf("Завершить: Ctrl+C или SIGTERM\n");
-
-    memset(poll_fds, 0, sizeof(poll_fds));
-    poll_fds[0].fd = srv_sock;
-    poll_fds[0].events = POLLIN;
-
-    while (!terminate_flag)
-    {
-        int poll_result = poll(poll_fds, active_fds, poll_timeout_ms);
-
-        if (poll_result == -1) {
-            if (errno == EINTR) continue;
-            perror("poll error");
-            break;
-        }
-
-        if (poll_result == 0) continue;
-
-        if (poll_fds[0].revents & POLLIN)
-        {
-            cli_addr_len = sizeof(cli_addr);
-            cli_sock = accept(srv_sock, (struct sockaddr *)&cli_addr, &cli_addr_len);
-            if (cli_sock == -1) {
-                perror("accept error");
-                continue;
-            }
-
-            printf("Новое подключение (дескриптор: %d)\n", cli_sock);
-
-            if (active_fds < MAX_CONN + 1) {
-                poll_fds[active_fds].fd = cli_sock;
-                poll_fds[active_fds].events = POLLIN;
-                active_fds++;
-            } else {
-                printf("Достигнут лимит подключений\n");
-                close(cli_sock);
-            }
-        }
-
-        for (idx = 1; idx < active_fds; idx++)
-        {
-            if (poll_fds[idx].revents & POLLIN)
-            {
-                received = read(poll_fds[idx].fd, recv_buf, BUF_SIZE - 1);
-
-                if (received > 0)
-                {
-                    recv_buf[received] = '\0';
-                    for (int k = 0; k < received; k++) {
-                        recv_buf[k] = toupper((unsigned char)recv_buf[k]);
-                    }
-                    printf("[Клиент %d]: %s", poll_fds[idx].fd, recv_buf);
-                    fflush(stdout);
-                }
-
-                if (received <= 0)
-                {
-                    printf("Клиент отключился (дескриптор: %d)\n", poll_fds[idx].fd);
-                    close(poll_fds[idx].fd);
-                    poll_fds[idx].fd = -1;
-                }
-            }
-        }
-
-        for (idx = 1; idx < active_fds; idx++)
-        {
-            if (poll_fds[idx].fd == -1)
-            {
-                for (int shift = idx; shift < active_fds - 1; shift++) {
-                    poll_fds[shift] = poll_fds[shift + 1];
-                }
-                active_fds--;
-                idx--;
-            }
+int register_client(struct pollfd *poll_set, int client_fd) {
+    for (int idx = 1; idx < MAX_POLL_DESCRIPTORS; idx++) {
+        if (poll_set[idx].fd < 0) {
+            poll_set[idx].fd = client_fd;
+            poll_set[idx].events = POLLIN | POLLPRI;
+            return 0; 
         }
     }
-
-    printf("Остановка сервера...\n");
-
-    for (idx = 0; idx < active_fds; idx++) {
-        if (poll_fds[idx].fd != -1) {
-            close(poll_fds[idx].fd);
-        }
-    }
-
-    unlink(UNIX_SOCK_PATH);
-    printf("Сервер завершил работу.\n");
-
-    return 0;
+    return -1;
 }
