@@ -1,10 +1,16 @@
+CC = gcc
+CFLAGS = -Wall
+LDFLAGS = -lrt
+
 all: server client
 
 server: server.c
-	cc server.c -o server
+	$(CC) $(CFLAGS) server.c -o server $(LDFLAGS)
+	chmod +x server
 
 client: client.c
-	cc client.c -o client
+	$(CC) $(CFLAGS) client.c -o client $(LDFLAGS)
+	chmod +x client
 
 clean:
-	rm -f server client ./наш_сокет
+	rm -f server client my_socket *.o
