@@ -12,3 +12,6 @@
 - `task_18`
 - `task_21`
 - `task_25`
+- `task_30`
+- `task_31`
+- `task_32`

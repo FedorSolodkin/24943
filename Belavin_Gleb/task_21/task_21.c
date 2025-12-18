@@ -1,27 +1,28 @@
 #include <stdio.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <unistd.h>
 
-volatile sig_atomic_t count = 0;
+int count = 0;
 
-void sigint_handler(int s) {
+void beep(int sig) {
     count++;
-    write(STDOUT_FILENO, "\a", 1);   
+    printf("\007");
+    fflush(stdout);
+    signal(SIGINT, beep);
 }
 
-void sigquit_handler(int s) {
-    printf("\nСигналов SIGINT: %d\n", count);
-    _exit(0);                       
+void quit(int sig) {
+    printf("\nSignal count: %d\n", count);
+    exit(0);
 }
 
-int main(void) {
-    signal(SIGINT, sigint_handler);
-    signal(SIGQUIT, sigquit_handler);
-
-    printf("CTRL-C: beep, CTRL-\\\\: exit\n");
-
-    while (1)
-        pause();                
-
-    return 0;
+int main() {
+    signal(SIGINT, beep);
+    signal(SIGQUIT, quit);
+    
+    printf("CTRL-C = beep, CTRL-\\ = quit\n");
+    
+    while(1)
+        pause();
 }
