@@ -1,170 +1,256 @@
 #include <stdio.h>
-#include <termios.h>
-#include <unistd.h>
-#include <ctype.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <termios.h>
+#include <ctype.h>
 
-#define MAX_LINE 40
+#define MAX_LINE_LENGTH 40
+#define MAX_TEXT_LENGTH 2000
+#define BELL '\007'
+#define ERASE_DEL 0x7F
+#define ERASE_BS  0x08
+#define KILL 0x15
+#define CTRL_W 0x17
+#define CTRL_D 0x04
 
-void erase_character(int fd, char *buffer, int *pos, int *column) {
-    if (*pos > 0) {
-        if (*column > 0) {
-            write(fd, "\b \b", 3);
-            (*pos)--;
-            (*column)--;
-        } else {
-            int line_start = *pos;
-            while (line_start > 0 && buffer[line_start - 1] != '\n') {
-                line_start--;
-            }
-            
-            if (line_start > 0) {
-                write(fd, "\b \b", 3);
-                (*pos)--;
-                
-                int prev_line_start = line_start - 1;
-                while (prev_line_start > 0 && buffer[prev_line_start - 1] != '\n') {
-                    prev_line_start--;
-                }
-                
-                int prev_line_end = line_start - 1;
-                int prev_line_length = prev_line_end - prev_line_start;
-                
-                *column = prev_line_length;
-                
-                write(fd, "\r", 1);
-                for (int i = prev_line_start; i < prev_line_end; i++) {
-                    write(fd, &buffer[i], 1);
-                }
-                for (int i = 0; i < prev_line_length; i++) {
-                    write(fd, "\b", 1);
-                }
-            }
-        }
-    }
+struct termios original_termios;
+
+void restore_terminal(void)
+{
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
 }
 
-void erase_word(int fd, char *buffer, int *pos, int *column) {
-    while (*pos > 0 && isspace(buffer[*pos - 1])) {
-        erase_character(fd, buffer, pos, column);
-    }
-    while (*pos > 0 && !isspace(buffer[*pos - 1])) {
-        erase_character(fd, buffer, pos, column);
-    }
+void setup_terminal(void)
+{
+    struct termios new_termios;
+    tcgetattr(STDIN_FILENO, &original_termios);
+    atexit(restore_terminal);
+    new_termios = original_termios;
+    // Отключаем канонический режим и эхо
+    new_termios.c_lflag &= ~(ICANON | ECHO); 
+    new_termios.c_cc[VMIN] = 1;
+    new_termios.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &new_termios);
 }
 
-void check_line_wrap(int fd, char *buffer, int *pos, int *column) {
-    if (*column < MAX_LINE) {
-        return;
+struct editor
+{
+    char text[MAX_TEXT_LENGTH];
+    int pos;
+    int len;
+};
+
+// Функция возвращает длину следующего слова (до пробела или конца строки)
+int get_next_word_len(const char *text, int start, int len) {
+    int i = start;
+    while (i < len && text[i] != ' ' && text[i] != '\t') {
+        i++;
     }
-    
-    int wrap_pos = *pos - 1;
-    int found_space = -1;
-    
-    while (wrap_pos >= 0 && (*pos - wrap_pos) <= MAX_LINE) {
-        if (isspace(buffer[wrap_pos])) {
-            found_space = wrap_pos;
-            break;
-        }
-        wrap_pos--;
-    }
-    
-    if (found_space != -1) {
-        int new_line_start = found_space + 1;
-        int chars_to_move = *pos - new_line_start;
-        
-        if (chars_to_move > 0) {
-            for (int i = 0; i < chars_to_move + 1; i++) {
-                write(fd, "\b \b", 3);
-            }
-            
-            write(fd, "\n", 1);
-            
-            for (int i = 0; i < chars_to_move; i++) {
-                write(fd, &buffer[new_line_start + i], 1);
-            }
-            
-            for (int i = 0; i < chars_to_move; i++) {
-                buffer[i] = buffer[new_line_start + i];
-            }
-            
-            *pos = chars_to_move;
-            *column = chars_to_move;
-        }
-    } else {
-        write(fd, "\n", 1);
-        *column = 0;
-    }
+    return i - start;
 }
 
-int main() {
-    struct termios oldt, newt;
-    char buffer[512];
-    int pos = 0;
-    int column = 0;
+void redraw(struct editor *e)
+{
+    // Очистка экрана и перемещение в начало
+    printf("\033[H\033[2J");
+    printf("Input text (CTRL-D at line start to exit):");
     
-    tcgetattr(STDIN_FILENO, &oldt);
-    newt = oldt;
-    newt.c_lflag &= ~(ICANON | ECHO);
-    newt.c_cc[VMIN] = 1;
-    newt.c_cc[VTIME] = 0;
-    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-    
-    unsigned char key_erase = oldt.c_cc[VERASE];
-    unsigned char key_kill = oldt.c_cc[VKILL];
-    unsigned char key_eof = oldt.c_cc[VEOF];
-    unsigned char key_werase = oldt.c_cc[VWERASE];
-    
-    char c;
-    while (read(STDIN_FILENO, &c, 1) == 1) {
-        if (c == key_eof && pos == 0) {
-            break;
+    // Начальная позиция для вывода текста (строка 2, колонка 1)
+    int start_row = 2;
+    int current_col = 0;
+    int current_row = 0; // Относительный номер строки (0, 1, 2...)
+
+    // Координаты, куда нужно будет поставить курсор терминала
+    int cursor_scr_row = start_row;
+    int cursor_scr_col = 1;
+
+    // Перемещаемся на позицию начала вывода
+    printf("\033[%d;1H", start_row);
+
+    int i = 0;
+    while (i <= e->len) // <= чтобы обработать случай, когда курсор в самом конце
+    {
+        // Если текущий индекс совпадает с позицией курсора в редакторе, запоминаем экранные координаты
+        if (i == e->pos) {
+            cursor_scr_row = start_row + current_row;
+            cursor_scr_col = current_col + 1;
         }
-        else if (c == key_erase) {
-            if (pos > 0) {
-                erase_character(STDOUT_FILENO, buffer, &pos, &column);
-            } else {
-                write(STDOUT_FILENO, "\a", 1);
+
+        if (i == e->len) break; // Конец текста
+
+        char c = e->text[i];
+
+        // Логика переноса слов
+        if (c == ' ') {
+            // Пробел просто печатаем, если он влезает. 
+            // Если мы ровно на 40-м символе, пробел вызовет перенос.
+            if (current_col >= MAX_LINE_LENGTH) {
+                printf("\n");
+                current_row++;
+                current_col = 0;
             }
-        }
-        else if (c == key_kill) {
-            while (pos > 0) {
-                erase_character(STDOUT_FILENO, buffer, &pos, &column);
-            }
-        }
-        else if (c == key_werase) {
-            if (pos > 0) {
-                erase_word(STDOUT_FILENO, buffer, &pos, &column);
-            } else {
-                write(STDOUT_FILENO, "\a", 1);
-            }
-        }
-        else if (c == '\n' || c == '\r') {
-            write(STDOUT_FILENO, &c, 1);
-            buffer[pos++] = '\n';
-            buffer[pos] = '\0';
-            printf("\nYou entered: %s", buffer);
-            pos = 0;
-            column = 0;
-        }
-        else if (isprint(c)) {
-            if (pos < sizeof(buffer) - 1) {
-                write(STDOUT_FILENO, &c, 1);
-                buffer[pos++] = c;
-                column++;
-                
-                if (isspace(c) || column >= MAX_LINE) {
-                    check_line_wrap(STDOUT_FILENO, buffer, &pos, &column);
-                }
-            } else {
-                write(STDOUT_FILENO, "\a", 1);
-            }
+            putchar(c);
+            current_col++;
+            i++;
         }
         else {
-            write(STDOUT_FILENO, "\a", 1);
+            // Это начало слова. Проверяем, влезает ли оно целиком.
+            int wlen = get_next_word_len(e->text, i, e->len);
+            
+            // Если слово не влезает в остаток строки, переносим на новую
+            // (но только если это не начало строки, чтобы не зациклить бесконечно длинное слово)
+            if (current_col + wlen > MAX_LINE_LENGTH && current_col > 0) {
+                printf("\n");
+                current_row++;
+                current_col = 0;
+            }
+
+            // Печатаем слово (или его часть, если оно само по себе длиннее 40 символов)
+            while (wlen > 0) {
+                 // Если мы в процессе печати длинного слова уперлись в край
+                if (current_col >= MAX_LINE_LENGTH) {
+                    printf("\n");
+                    current_row++;
+                    current_col = 0;
+                }
+                
+                // Проверка на позицию курсора внутри слова
+                if (i == e->pos) {
+                    cursor_scr_row = start_row + current_row;
+                    cursor_scr_col = current_col + 1;
+                }
+
+                putchar(e->text[i]);
+                i++;
+                current_col++;
+                wlen--;
+            }
         }
     }
-    
-    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+
+    // Ставим курсор на запомненное место
+    printf("\033[%d;%dH", cursor_scr_row, cursor_scr_col);
+    fflush(stdout);
+}
+
+void erase_word(struct editor *e)
+{
+    if (e->pos == 0)
+    {
+        putchar(BELL);
+        fflush(stdout);
+        return;
+    }
+
+    int end = e->pos;
+    // Пропускаем пробелы справа налево
+    while (end > 0 && e->text[end - 1] == ' ')
+        end--;
+    // Пропускаем символы слова справа налево
+    while (end > 0 && e->text[end - 1] != ' ')
+        end--;
+
+    int n = e->pos - end;
+    if (n > 0)
+    {
+        memmove(e->text + end, e->text + e->pos, e->len - e->pos + 1);
+        e->len -= n;
+        e->pos = end;
+        redraw(e);
+    }
+}
+
+int main(void)
+{
+    struct editor e = {.pos = 0, .len = 0};
+    char c;
+
+    setup_terminal();
+    redraw(&e); // Первая отрисовка
+
+    while (read(STDIN_FILENO, &c, 1) == 1)
+    {
+        if (c == CTRL_D)
+        {
+            if (e.pos == 0) {
+                printf("\nExit.\n");
+                break;
+            } else {
+                putchar(BELL);
+                fflush(stdout);
+            }
+            continue;
+        }
+
+        // Обработка Backspace (может быть 0x7F или 0x08)
+        if (c == ERASE_DEL || c == ERASE_BS)
+        {
+            if (e.pos > 0)
+            {
+                e.pos--;
+                e.len--;
+                memmove(e.text + e.pos, e.text + e.pos + 1, e.len - e.pos + 1);
+                redraw(&e);
+            }
+            else
+            {
+                putchar(BELL);
+                fflush(stdout);
+            }
+            continue;
+        }
+
+        if (c == KILL)
+        {
+            // KILL удаляет все от начала строки (буфера) до курсора
+            if (e.pos > 0)
+            {
+                memmove(e.text, e.text + e.pos, e.len - e.pos + 1);
+                e.len -= e.pos;
+                e.pos = 0;
+                redraw(&e);
+            }
+            else
+            {
+                putchar(BELL);
+                fflush(stdout);
+            }
+            continue;
+        }
+
+        if (c == CTRL_W)
+        {
+            erase_word(&e);
+            continue;
+        }
+
+        // Проверка на печатные символы (пробел - 32, тильда - 126)
+        if (c < 32 || c > 126)
+        {
+            putchar(BELL);
+            fflush(stdout);
+            continue;
+        }
+
+        if (e.len >= MAX_TEXT_LENGTH - 1)
+        {
+            putchar(BELL);
+            fflush(stdout);
+            continue;
+        }
+
+        // Вставка символа
+        if (e.pos < e.len)
+        {
+            memmove(e.text + e.pos + 1, e.text + e.pos, e.len - e.pos);
+        }
+        e.text[e.pos] = c;
+        e.pos++;
+        e.len++;
+        e.text[e.len] = '\0';
+        redraw(&e);
+    }
+
     return 0;
 }
