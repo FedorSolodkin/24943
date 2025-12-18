@@ -10,12 +10,10 @@
 
 struct termios orig_termios;
 
-// Восстановление настроек терминала при выходе
 void disableRawMode() {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
 }
 
-// Включение "сырого" режима
 void enableRawMode() {
     if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
         perror("tcgetattr");
@@ -24,48 +22,38 @@ void enableRawMode() {
     atexit(disableRawMode);
 
     struct termios raw = orig_termios;
-    // Отключаем эхо и канонический режим (построчный ввод)
     raw.c_lflag &= ~(ECHO | ICANON);
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
-// Функция полной перерисовки буфера с учетом переноса слов
 void redraw(char *buf, int len, int *prev_lines) {
-    // 1. Возвращаем курсор в начало и очищаем все ниже
     if (*prev_lines > 0) {
-        printf("\033[%dA", *prev_lines); // Поднять курсор вверх
+        printf("\033[%dA", *prev_lines);
     }
-    printf("\r\033[J"); // В начало строки + очистить экран ниже
+    printf("\r\033[J");
 
     int col = 0;
     int lines = 0;
     int i = 0;
 
-    // 2. Печатаем буфер слово за словом
     while (i < len) {
-        // Находим конец текущего слова
         int word_start = i;
         while (i < len && !isspace(buf[i])) i++;
         int word_len = i - word_start;
 
-        // Находим пробелы после слова
         int space_start = i;
         while (i < len && isspace(buf[i])) i++;
         int space_len = i - space_start;
 
-        // Если слово не влезает в остаток строки (и это не начало строки) -> перенос
         if (col + word_len > LINE_WIDTH && col > 0) {
             printf("\n");
             col = 0;
             lines++;
         }
 
-        // Печатаем слово
         for (int k = word_start; k < word_start + word_len; k++) putchar(buf[k]);
         col += word_len;
 
-        // Печатаем пробелы (если они влезли, иначе перенос, но пробелы в начале новой строки обычно игнорируют или печатают)
-        // Для простоты: печатаем как есть, следим за шириной
         for (int k = space_start; k < space_start + space_len; k++) {
             if (col >= LINE_WIDTH) {
                 printf("\n");
@@ -119,12 +107,11 @@ int main() {
                 printf("\a"); // Буфер переполнен
             }
         } 
-        else { // Непечатаемый символ
+        else {
             printf("\a"); // BELL (Ctrl-G)
             fflush(stdout);
         }
 
-        // Перерисовка экрана после любого изменения
         redraw(buf, len, &prev_lines);
     }
 
