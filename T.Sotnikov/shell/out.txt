@@ -1,6 +1,0 @@
-out.txt
-parseline.c
-promptline.c
-shell
-shell.c
-shell.h

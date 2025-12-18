@@ -69,7 +69,8 @@ void redraw(char *buf, int len, int *prev_lines) {
     *prev_lines = lines; // Запоминаем высоту текста для следующей очистки
 }
 
-int main() {
+int main()
+{
     char buf[MAX_BUF];
     int len = 0;
     int prev_lines = 0; // Сколько строк занял вывод в прошлый раз

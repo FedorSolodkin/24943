@@ -16,7 +16,8 @@ void handle_sigquit(int sig) {
     exit(0);
 }
 
-int main() {
+int main()
+{
     // Ctrl+C
     if (signal(SIGINT, handle_sigint) == SIG_ERR) {
         perror("Ошибка при установке SIGINT");

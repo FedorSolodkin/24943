@@ -3,7 +3,8 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
     if (argc != 2) {
         fprintf(stderr, "Использование: %s <имя_файла>\n", argv[0]);
         exit(EXIT_FAILURE);

@@ -50,7 +50,8 @@ void process_file(const char *path) {
            type, perms, links, user_name, group_name, size_str, date_str, filename);
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
     if (argc < 2) {
         fprintf(stderr, "Использование: %s <файл1> [файл2 ...]\n", argv[0]);
         return 1;
