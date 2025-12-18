@@ -1,5 +1,5 @@
 build:
 	gcc -o task task9.c
 
-run:
+run: build
 	./task file.txt

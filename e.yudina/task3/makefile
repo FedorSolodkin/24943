@@ -1,6 +1,6 @@
 build:
 	gcc -o task task3.c
 
-run:
+run: build
 	./task data.txt
 

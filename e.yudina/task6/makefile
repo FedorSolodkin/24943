@@ -1,5 +1,5 @@
 build:
         gcc -o t task6.c
 
-run:
+run: build
         ./t input.txt

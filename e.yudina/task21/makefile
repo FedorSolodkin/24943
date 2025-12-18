@@ -1,5 +1,5 @@
 build:
 	gcc -o task task21.c
 
-run:
+run: build
 	./task

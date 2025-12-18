@@ -1,5 +1,5 @@
 build:
-        gcc -o task task17.c
+	gcc -o task task17.c
 
-run:
-        ./task
+run: build
+	./task
