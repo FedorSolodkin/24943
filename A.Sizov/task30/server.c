@@ -5,6 +5,8 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <netinet/in.h>
+
 
 #define SOCKET_PATH "/tmp/uds_socket"
 #define BUFFER_SIZE 1024
@@ -39,7 +41,7 @@ int main() {
         exit(1);
     }
 
-    printf("Server listening on %s...\n", SOCKET_PATH);
+    printf("Сервер запущен.\n", SOCKET_PATH);
 
     // соединение
     if ((client_fd = accept(server_fd, NULL, NULL)) < 0) {
@@ -52,7 +54,7 @@ int main() {
         for (ssize_t i = 0; i < n; i++) {
             buf[i] = toupper((unsigned char)buf[i]);
         }
-        write(STDOUT_FILENO, buf, n);  // вывод на экран
+        write(STDOUT_FILENO, buf, n);
     }
 
     close(client_fd);

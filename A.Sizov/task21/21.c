@@ -6,7 +6,7 @@
 int signal_count = 0;
 
 void sigint_handler(int sig) {
-    printf("\a");          // звуковой сигнал
+    printf("\a");
     fflush(stdout);
     signal_count++;
 }

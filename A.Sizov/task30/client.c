@@ -28,7 +28,7 @@ int main() {
         exit(1);
     }
 
-    printf("Enter text to send to server (Ctrl+D to end):\n");
+    printf("Введите текст (Ctrl+D — завершить):\n");
 
     // Чтение и отправка на сервер
     while (fgets(buf, sizeof(buf), stdin) != NULL) {

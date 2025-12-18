@@ -3,6 +3,8 @@
 #include <unistd.h>
 #include <ctype.h>
 #include <string.h>
+#include <sys/wait.h>
+
 
 #define BUFFER_SIZE 1024
 
@@ -23,7 +25,7 @@ int main() {
     }
 
     if (pid == 0) {
-        // ===== Дочерний процесс =====
+        // Дочерний процесс
         close(pipefd[1]);
 
         ssize_t n;
@@ -38,7 +40,7 @@ int main() {
         exit(0);
 
     } else {
-        // ===== Родительский процесс =====
+        // Родительский процесс 
         close(pipefd[0]);
 
         printf("Введите текст (Ctrl+D для окончания):\n");
