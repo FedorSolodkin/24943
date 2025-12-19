@@ -1,0 +1,22 @@
+# Временные файлы
+.nfs*
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Бинарники и объекты
+*.o
+*.a
+*.so
+*.out
+*.exe
+
+# Папки сборки
+/bin/
+/obj/
+/build/
+
+# Настройки IDE
+/.vscode/

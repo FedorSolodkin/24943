@@ -1,0 +1,6 @@
+This is the first line of test file
+Second line with some text content
+Third line for testing cat command
+Fourth line - more content here
+Fifth line completes our test file
+END

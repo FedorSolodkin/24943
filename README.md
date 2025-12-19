@@ -1,5 +1,19 @@
+
 # 24943
 
+Подключение к Solaris
+
+https://github.com/vkinsu/
+
+ssh username@ccfit.nsu.ru
+
+ssh-keygen -t rsa
+
+cp .ssh/id_rsa.pub .ssh/authorized_keys
+
+ssh 10.4.0.68
+
+cat .ssh/id_rsa.pub
 
 # Первый этап
 
@@ -64,3 +78,5 @@
 2. git branch -M main
 3. git push -u origin main
 
+
+>>>>>>> 8016ba8dc8766cc0c31e918b3a704d69af92f218
